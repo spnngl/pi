@@ -1,0 +1,26 @@
+{
+  "name": "codebase-index",
+  "version": "1.0.0",
+  "description": "Codebase indexing with codestral-embed for semantic search",
+  "type": "module",
+  "dependencies": {
+    "@mistralai/mistralai": "^1.5.0",
+    "glob": "^11.0.0",
+    "ignore": "^7.0.4",
+    "sql.js": "^1.14.0"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@mariozechner/pi-coding-agent": "^0.55.0",
+    "@sinclair/typebox": "^0.34.48",
+    "@types/sql.js": "^1.4.9",
+    "eslint": "^10.0.2",
+    "globals": "^17.3.0",
+    "typescript-eslint": "^8.56.1"
+  }
+}
