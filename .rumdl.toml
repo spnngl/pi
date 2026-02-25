@@ -1,0 +1,74 @@
+[global]
+# List of rules to disable
+# MD024: Multiple headers with the same content
+# MD036: Emphasis used instead of a header
+# MD041: First line in file should be a top level header (we have examples without)
+disable = ["MD024", "MD033", "MD036", "MD041"]
+# List of rules to enable exclusively (if provided, only these rules will run)
+# enable = ["MD001", "MD003", "MD004"]
+# List of file/directory patterns to include for linting (if provided, only these will be linted)
+# include = [
+#    "docs/*.md",
+#    "src/**/*.md",
+#    "README.md"
+# ]
+# List of file/directory patterns to exclude from linting
+exclude = [
+  # Common directories to exclude
+  ".git",
+  ".github",
+  "node_modules",
+  "vendor",
+  "dist",
+  "build",
+  # Specific files or patterns
+  "CHANGELOG.md",
+  "LICENSE.md",
+]
+# Respect .gitignore files when scanning directories (default: true)
+respect-gitignore = true
+# Markdown flavor/dialect (uncomment to enable)
+# Options: standard (default), gfm, commonmark, mkdocs, mdx, quarto
+flavor = "standard"
+
+[MD009]
+br-spaces = 2  # Number of spaces for hard line breaks (default: 2)
+strict = true  # Remove all trailing spaces, even line breaks (default: false)
+list-item-empty-lines = false  # Allow trailing spaces in empty list item lines (default: false)
+
+[MD013]
+line-length = 200  # Maximum characters per line (default: 80)
+code-blocks = true  # Don't check code blocks (default: true)
+tables = false  # Don't check tables (default: false)
+headings = false  # Check headings (default: true)
+paragraphs = true  # Check paragraph/regular text (default: true)
+strict = false  # Disables exceptions for URLs, etc. (default: false)
+reflow = true  # Enable automatic text reflow/wrapping (default: false)
+reflow-mode = "default"  # Reflow mode: "default", "normalize", or "sentence-per-line" (default: "default")
+length-mode = "chars"  # How to count line length: "visual", "chars", or "bytes" (default: "visual")
+
+# This aligns continuation text with first word
+#   *   List item text
+#   1.  Numbered item text
+[MD030]
+ul_single = 3
+ul_multi = 3
+ol_single = 2
+ol_multi = 2
+
+[MD044]
+names = ["rumdl", "Markdown", "GitHub"]
+code-blocks = false
+
+[MD046]
+style = "fenced"
+
+[MD051]
+anchor-style = "github"
+
+[MD060]
+enabled = true
+style = "aligned"
+
+# [per-file-ignores]
+# "opencode/skills/opencode/agent-creator/assets/agent-template.md" = ["MD041"]
