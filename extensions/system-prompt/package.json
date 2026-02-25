@@ -1,0 +1,16 @@
+{
+  "name": "system-prompt",
+  "version": "1.0.0",
+  "description": "Extension to print the current system prompt",
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "devDependencies": {
+    "@mariozechner/pi-coding-agent": "^0.55.0",
+    "@sinclair/typebox": "^0.34.48",
+    "typescript": "^5.9.3"
+  }
+}
