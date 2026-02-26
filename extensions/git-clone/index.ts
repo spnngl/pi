@@ -5,12 +5,13 @@
  * into ~/src/<registry>/<path>/<name>. If the repository already exists,
  * runs `git pull` instead.
  *
+ * All URLs are normalised to SSH before cloning (git@host:path.git).
  * Authentication is handled externally (ssh-agent, credential helper, etc.).
  *
- * Supported URL formats:
+ * Supported URL formats (all converted to SSH internally):
  *   git@gitlab.wiremind.io:wiremind/devops/repo.git  (SSH)
- *   https://github.com/user/repo.git                 (HTTPS)
- *   git://github.com/user/repo.git                   (Git protocol)
+ *   https://github.com/user/repo.git                 (HTTPS → SSH)
+ *   git://github.com/user/repo.git                   (Git protocol → SSH)
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -33,12 +34,24 @@ interface ParsedRepo {
   segments: string[];
   /** Last segment — the repository name, e.g. "repo" */
   name: string;
-  /** Original URL, preserved for the git clone command */
+  /** Normalised SSH URL used for git clone, e.g. "git@github.com:user/repo.git" */
   cloneUrl: string;
 }
 
 /**
  * Parse a git URL into its constituent parts.
+ * Returns null for unrecognised or malformed inputs.
+ */
+/**
+ * Build the canonical SSH clone URL from parsed components.
+ * e.g. registry="github.com", segments=["user","repo"] → "git@github.com:user/repo.git"
+ */
+function toSshUrl(registry: string, segments: string[]): string {
+  return `git@${registry}:${segments.join("/")}.git`;
+}
+
+/**
+ * Parse a git URL into its constituent parts, normalising the clone URL to SSH.
  * Returns null for unrecognised or malformed inputs.
  */
 function parseGitUrl(input: string): ParsedRepo | null {
@@ -55,7 +68,7 @@ function parseGitUrl(input: string): ParsedRepo | null {
       registry,
       segments,
       name: segments[segments.length - 1],
-      cloneUrl: raw,
+      cloneUrl: toSshUrl(registry, segments),
     };
   }
 
@@ -82,7 +95,7 @@ function parseGitUrl(input: string): ParsedRepo | null {
       registry,
       segments,
       name: segments[segments.length - 1],
-      cloneUrl: raw,
+      cloneUrl: toSshUrl(registry, segments),
     };
   } catch {
     return null;
@@ -108,16 +121,18 @@ export default function gitCloneExtension(pi: ExtensionAPI) {
     description: `\
 Clone a git repository into ~/src/<registry>/<path>/<name>.
 If the target directory already exists, runs \`git pull\` instead.
+HTTPS and git:// URLs are automatically converted to SSH before cloning.
 Authentication is handled by the user's environment (ssh-agent, credential helper, etc.).
 
-Supported URL formats:
-  git@gitlab.wiremind.io:wiremind/devops/repo.git  (SSH, preferred)
-  https://github.com/user/repo.git                 (HTTPS)
-  git://github.com/user/repo.git                   (Git protocol)
+Accepted URL formats (all normalised to SSH internally):
+  git@gitlab.wiremind.io:wiremind/devops/repo.git  (SSH)
+  https://github.com/user/repo.git                 (HTTPS → SSH)
+  git://github.com/user/repo.git                   (git:// → SSH)
 
 Examples:
-  git@github.com:user/repo.git
-    → ~/src/github.com/user/repo
+  https://github.com/crowdsecurity/crowdsec
+    → clones via git@github.com:crowdsecurity/crowdsec.git
+    → ~/src/github.com/crowdsecurity/crowdsec
   git@gitlab.wiremind.io:wiremind/devops/wiremind-services-configuration.git
     → ~/src/gitlab.wiremind.io/wiremind/devops/wiremind-services-configuration`,
 
@@ -130,12 +145,6 @@ Examples:
         Type.String({
           description:
             "Branch or tag to checkout. Defaults to the repository's default branch.",
-        }),
-      ),
-      shallow: Type.Optional(
-        Type.Boolean({
-          description:
-            "Perform a shallow clone (--depth 1). Faster but omits full history.",
         }),
       ),
     }),
@@ -212,15 +221,14 @@ Examples:
 
       onUpdate?.({
         content: [
-          { type: "text", text: `Cloning ${params.url} → ${target} ...` },
+          { type: "text", text: `Cloning ${parsed.cloneUrl} → ${target} ...` },
         ],
         details: {},
       });
 
       const args: string[] = ["clone"];
       if (params.branch) args.push("--branch", params.branch);
-      if (params.shallow) args.push("--depth", "1");
-      args.push(params.url, target);
+      args.push(parsed.cloneUrl, target);
 
       const result = await pi.exec("git", args, { signal });
 
