@@ -1,0 +1,16 @@
+{
+  "name": "pi-nushell",
+  "version": "0.1.0",
+  "description": "Nushell tool extension for pi coding agent",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "devDependencies": {
+    "@mariozechner/pi-coding-agent": "^0.55.0",
+    "@sinclair/typebox": "^0.34.48",
+    "@types/node": "^25.3.1",
+    "typescript": "^5.9.3"
+  }
+}
