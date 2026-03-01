@@ -17,13 +17,10 @@
  * - MISTRAL_API_KEY: Required for embedding generation
  */
 
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-} from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { Mistral } from "@mistralai/mistralai";
-import initSqlJs, { type Database } from "sql.js";
+import initSqlJs, { type Database, type SqlValue } from "sql.js";
 import { glob } from "glob";
 import ignore from "ignore";
 import * as fs from "node:fs";
@@ -32,7 +29,6 @@ import * as crypto from "node:crypto";
 
 // Configuration
 const EMBEDDING_MODEL = "codestral-embed";
-const EMBEDDING_DIMENSION = 1024; // codestral-embed dimension
 const BATCH_SIZE = 10; // Files per batch
 const MAX_FILE_SIZE = 100 * 1024; // 100KB max file size
 const CHUNK_SIZE = 6000; // Target ~1500-2000 tokens per chunk
@@ -72,6 +68,20 @@ interface SearchResult {
   score: number;
   startLine: number;
   endLine: number;
+}
+
+// Type guard helpers for SqlValue parsing
+function asString(val: SqlValue): string {
+  if (typeof val === "string") return val;
+  if (val === null) return "";
+  if (typeof val === "number") return String(val);
+  return new TextDecoder().decode(val);
+}
+
+function asNumber(val: SqlValue): number {
+  if (typeof val === "number") return val;
+  if (typeof val === "string") return Number(val);
+  return 0;
 }
 
 export default function codebaseIndexExtension(pi: ExtensionAPI) {
@@ -147,9 +157,7 @@ export default function codebaseIndexExtension(pi: ExtensionAPI) {
   // Convert base64 back to float array
   function base64ToEmbedding(base64: string): number[] {
     const buffer = Buffer.from(base64, "base64");
-    return Array.from(
-      new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4),
-    );
+    return Array.from(new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4));
   }
 
   // Initialize Mistral client
@@ -175,9 +183,7 @@ export default function codebaseIndexExtension(pi: ExtensionAPI) {
       inputs: safeTexts,
     });
 
-    return response.data
-      .map((d) => d.embedding)
-      .filter((e): e is number[] => e !== undefined);
+    return response.data.map((d) => d.embedding).filter((e): e is number[] => e !== undefined);
   }
 
   // Check if file is likely binary or minified
@@ -206,15 +212,44 @@ export default function codebaseIndexExtension(pi: ExtensionAPI) {
     return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
   }
 
+  // Search chunks by embedding similarity
+  function searchByEmbedding(
+    queryEmbedding: number[],
+    limit: number,
+    excludePath?: string,
+  ): SearchResult[] | null {
+    if (!db) return null;
+
+    const result = db.exec(`
+      SELECT path, content, embedding, start_line, end_line
+      FROM chunks WHERE embedding IS NOT NULL
+    `);
+
+    if (!result.length || !result[0].values.length) return null;
+
+    const results: SearchResult[] = result[0].values
+      .filter((row) => !excludePath || asString(row[0]) !== excludePath)
+      .map((row) => {
+        const [filePath, content, embeddingB64, startLine, endLine] = row;
+        const embedding = base64ToEmbedding(asString(embeddingB64));
+        return {
+          path: asString(filePath),
+          content: asString(content),
+          score: cosineSimilarity(queryEmbedding, embedding),
+          startLine: asNumber(startLine),
+          endLine: asNumber(endLine),
+        };
+      });
+
+    results.sort((a, b) => b.score - a.score);
+    return results.slice(0, limit);
+  }
+
   // Split file into chunks
   function chunkFile(filePath: string, content: string): FileChunk[] {
     const lines = content.split("\n");
     const chunks: FileChunk[] = [];
-    const hash = crypto
-      .createHash("sha256")
-      .update(content)
-      .digest("hex")
-      .slice(0, 16);
+    const hash = crypto.createHash("sha256").update(content).digest("hex").slice(0, 16);
 
     let currentChunk = "";
     let startLine = 1;
@@ -341,21 +376,12 @@ export default function codebaseIndexExtension(pi: ExtensionAPI) {
             continue;
           }
 
-          const hash = crypto
-            .createHash("sha256")
-            .update(content)
-            .digest("hex")
-            .slice(0, 16);
+          const hash = crypto.createHash("sha256").update(content).digest("hex").slice(0, 16);
 
           // Check if already indexed with same hash
-          const result = db.exec(
-            "SELECT hash FROM chunks WHERE path = ? LIMIT 1",
-            [file],
-          );
+          const result = db.exec("SELECT hash FROM chunks WHERE path = ? LIMIT 1", [file]);
           const existing =
-            result.length > 0 && result[0].values.length > 0
-              ? result[0].values[0][0]
-              : null;
+            result.length > 0 && result[0].values.length > 0 ? result[0].values[0][0] : null;
 
           if (existing === hash) {
             skipped++;
@@ -370,17 +396,11 @@ export default function codebaseIndexExtension(pi: ExtensionAPI) {
           indexed++;
 
           if (indexed % 50 === 0) {
-            ctx.ui.setStatus(
-              "index",
-              `🔍 Collected ${indexed}/${files.length - skipped} files...`,
-            );
+            ctx.ui.setStatus("index", `🔍 Collected ${indexed}/${files.length - skipped} files...`);
           }
         }
 
-        ctx.ui.notify(
-          `Embedding ${allChunks.length} chunks from ${indexed} files...`,
-          "info",
-        );
+        ctx.ui.notify(`Embedding ${allChunks.length} chunks from ${indexed} files...`, "info");
 
         // Batch embed and store
         for (let i = 0; i < allChunks.length; i += BATCH_SIZE) {
@@ -388,9 +408,7 @@ export default function codebaseIndexExtension(pi: ExtensionAPI) {
           // Truncate to stay within token limits (codestral-embed max is 8192 tokens)
           const texts = batch.map((c) => {
             const text = `File: ${c.path}\n\n${c.content}`;
-            return text.length > MAX_EMBED_CHARS
-              ? text.slice(0, MAX_EMBED_CHARS)
-              : text;
+            return text.length > MAX_EMBED_CHARS ? text.slice(0, MAX_EMBED_CHARS) : text;
           });
 
           try {
@@ -493,9 +511,7 @@ export default function codebaseIndexExtension(pi: ExtensionAPI) {
       "Search the codebase semantically using natural language. Returns relevant code snippets ranked by similarity. Use this when you need to find code related to a concept, not just literal text matches.",
     parameters: Type.Object({
       query: Type.String({ description: "Natural language search query" }),
-      limit: Type.Optional(
-        Type.Number({ description: "Max results (default 10)", default: 10 }),
-      ),
+      limit: Type.Optional(Type.Number({ description: "Max results (default 10)", default: 10 })),
     }),
     async execute(_toolCallId, params, _signal, onUpdate, ctx) {
       try {
@@ -503,24 +519,14 @@ export default function codebaseIndexExtension(pi: ExtensionAPI) {
         if (!mistral) mistral = initMistral();
 
         onUpdate?.({
-          content: [{ type: "text", text: "Generating query embedding..." }],
-          details: {},
-        });
-
-        const [queryEmbedding] = await embed([params.query]);
-
-        onUpdate?.({
           content: [{ type: "text", text: "Searching..." }],
           details: {},
         });
 
-        // Get all chunks with embeddings
-        const result = db.exec(`
-          SELECT path, content, embedding, start_line, end_line
-          FROM chunks WHERE embedding IS NOT NULL
-        `);
+        const [queryEmbedding] = await embed([params.query]);
+        const results = searchByEmbedding(queryEmbedding, params.limit || 10);
 
-        if (!result.length || !result[0].values.length) {
+        if (!results) {
           return {
             content: [
               {
@@ -532,26 +538,7 @@ export default function codebaseIndexExtension(pi: ExtensionAPI) {
           };
         }
 
-        // Compute similarities
-        const results: SearchResult[] = result[0].values.map((row) => {
-          const [filePath, content, embeddingB64, startLine, endLine] = row;
-          const embedding = base64ToEmbedding(embeddingB64 as string);
-          const score = cosineSimilarity(queryEmbedding, embedding);
-          return {
-            path: filePath as string,
-            content: content as string,
-            score,
-            startLine: startLine as number,
-            endLine: endLine as number,
-          };
-        });
-
-        // Sort by score and take top results
-        results.sort((a, b) => b.score - a.score);
-        const topResults = results.slice(0, params.limit || 10);
-
-        // Format output
-        const output = topResults
+        const output = results
           .map(
             (r, i) =>
               `### ${i + 1}. ${r.path}:${r.startLine}-${r.endLine} (score: ${r.score.toFixed(3)})\n\`\`\`\n${r.content.slice(0, 1000)}${r.content.length > 1000 ? "\n..." : ""}\n\`\`\``,
@@ -560,7 +547,7 @@ export default function codebaseIndexExtension(pi: ExtensionAPI) {
 
         return {
           content: [{ type: "text", text: output || "No results found." }],
-          details: { resultCount: topResults.length, query: params.query },
+          details: { resultCount: results.length, query: params.query },
         };
       } catch (err) {
         return {
@@ -579,26 +566,19 @@ export default function codebaseIndexExtension(pi: ExtensionAPI) {
     description:
       "Find files similar to a given file or code snippet. Useful for finding related code, duplicate patterns, or similar implementations.",
     parameters: Type.Object({
-      file: Type.Optional(
-        Type.String({ description: "Path to file to find similar files to" }),
-      ),
-      code: Type.Optional(
-        Type.String({ description: "Code snippet to find similar code to" }),
-      ),
-      limit: Type.Optional(
-        Type.Number({ description: "Max results (default 5)", default: 5 }),
-      ),
+      file: Type.Optional(Type.String({ description: "Path to file to find similar files to" })),
+      code: Type.Optional(Type.String({ description: "Code snippet to find similar code to" })),
+      limit: Type.Optional(Type.Number({ description: "Max results (default 5)", default: 5 })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       try {
-        if (!params.file && !params.code) {
+        const text = params.file
+          ? fs.readFileSync(path.join(ctx.cwd, params.file), "utf8")
+          : params.code;
+
+        if (!text) {
           return {
-            content: [
-              {
-                type: "text",
-                text: "Either 'file' or 'code' parameter is required",
-              },
-            ],
+            content: [{ type: "text", text: "Either 'file' or 'code' parameter is required" }],
             isError: true,
             details: {},
           };
@@ -607,54 +587,17 @@ export default function codebaseIndexExtension(pi: ExtensionAPI) {
         if (!db) db = await initDb(ctx.cwd);
         if (!mistral) mistral = initMistral();
 
-        let text: string;
-        if (params.file) {
-          const fullPath = path.join(ctx.cwd, params.file);
-          text = fs.readFileSync(fullPath, "utf8");
-        } else {
-          text = params.code!;
-        }
-
         const [queryEmbedding] = await embed([text.slice(0, CHUNK_SIZE)]);
+        const results = searchByEmbedding(queryEmbedding, params.limit || 5, params.file);
 
-        // Get all chunks
-        const result = db.exec(`
-          SELECT path, content, embedding, start_line, end_line
-          FROM chunks WHERE embedding IS NOT NULL
-        `);
-
-        if (!result.length || !result[0].values.length) {
+        if (!results) {
           return {
-            content: [
-              {
-                type: "text",
-                text: "No indexed content found. Run /index first.",
-              },
-            ],
+            content: [{ type: "text", text: "No indexed content found. Run /index first." }],
             details: { resultCount: 0 },
           };
         }
 
-        // Compute similarities (excluding the source file if provided)
-        const results: SearchResult[] = result[0].values
-          .filter((row) => !params.file || row[0] !== params.file)
-          .map((row) => {
-            const [filePath, content, embeddingB64, startLine, endLine] = row;
-            const embedding = base64ToEmbedding(embeddingB64 as string);
-            const score = cosineSimilarity(queryEmbedding, embedding);
-            return {
-              path: filePath as string,
-              content: content as string,
-              score,
-              startLine: startLine as number,
-              endLine: endLine as number,
-            };
-          });
-
-        results.sort((a, b) => b.score - a.score);
-        const topResults = results.slice(0, params.limit || 5);
-
-        const output = topResults
+        const output = results
           .map(
             (r, i) =>
               `### ${i + 1}. ${r.path}:${r.startLine}-${r.endLine} (similarity: ${(r.score * 100).toFixed(1)}%)\n\`\`\`\n${r.content.slice(0, 500)}${r.content.length > 500 ? "\n..." : ""}\n\`\`\``,
@@ -663,7 +606,7 @@ export default function codebaseIndexExtension(pi: ExtensionAPI) {
 
         return {
           content: [{ type: "text", text: output || "No similar files found." }],
-          details: { resultCount: topResults.length },
+          details: { resultCount: results.length },
         };
       } catch (err) {
         return {
@@ -682,7 +625,7 @@ export default function codebaseIndexExtension(pi: ExtensionAPI) {
     description:
       "Index the codebase for semantic search. Run this before using semantic_search or find_similar tools. Only needed once or when files change significantly.",
     parameters: Type.Object({}),
-    async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+    async execute(_toolCallId, _params, _signal, _onUpdate) {
       // Trigger the index command
       pi.sendUserMessage("/index", { deliverAs: "followUp" });
       return {

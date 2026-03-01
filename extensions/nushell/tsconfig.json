@@ -6,7 +6,7 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "strict": true,
-    "noEmit": true
+    "noEmit": true,
   },
-  "include": ["index.ts"]
+  "include": ["index.ts"],
 }

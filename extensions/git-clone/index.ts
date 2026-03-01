@@ -32,16 +32,10 @@ interface ParsedRepo {
    * ["user", "repo"] or ["wiremind", "devops", "wiremind-services-configuration"]
    */
   segments: string[];
-  /** Last segment — the repository name, e.g. "repo" */
-  name: string;
   /** Normalised SSH URL used for git clone, e.g. "git@github.com:user/repo.git" */
   cloneUrl: string;
 }
 
-/**
- * Parse a git URL into its constituent parts.
- * Returns null for unrecognised or malformed inputs.
- */
 /**
  * Build the canonical SSH clone URL from parsed components.
  * e.g. registry="github.com", segments=["user","repo"] → "git@github.com:user/repo.git"
@@ -67,7 +61,6 @@ function parseGitUrl(input: string): ParsedRepo | null {
     return {
       registry,
       segments,
-      name: segments[segments.length - 1],
       cloneUrl: toSshUrl(registry, segments),
     };
   }
@@ -76,11 +69,7 @@ function parseGitUrl(input: string): ParsedRepo | null {
   // Node.js accepts the "git:" scheme, so this works for both.
   try {
     const url = new URL(raw);
-    if (
-      url.protocol !== "https:" &&
-      url.protocol !== "http:" &&
-      url.protocol !== "git:"
-    ) {
+    if (url.protocol !== "https:" && url.protocol !== "http:" && url.protocol !== "git:") {
       return null;
     }
     const registry = url.hostname;
@@ -94,7 +83,6 @@ function parseGitUrl(input: string): ParsedRepo | null {
     return {
       registry,
       segments,
-      name: segments[segments.length - 1],
       cloneUrl: toSshUrl(registry, segments),
     };
   } catch {
@@ -143,8 +131,7 @@ Examples:
       }),
       branch: Type.Optional(
         Type.String({
-          description:
-            "Branch or tag to checkout. Defaults to the repository's default branch.",
+          description: "Branch or tag to checkout. Defaults to the repository's default branch.",
         }),
       ),
     }),
@@ -178,9 +165,7 @@ Examples:
       // 3a. If it already exists, pull.
       if (exists) {
         onUpdate?.({
-          content: [
-            { type: "text", text: `Already cloned — pulling ${target} ...` },
-          ],
+          content: [{ type: "text", text: `Already cloned — pulling ${target} ...` }],
           details: {},
         });
 
@@ -220,9 +205,7 @@ Examples:
       fs.mkdirSync(parent, { recursive: true });
 
       onUpdate?.({
-        content: [
-          { type: "text", text: `Cloning ${parsed.cloneUrl} → ${target} ...` },
-        ],
+        content: [{ type: "text", text: `Cloning ${parsed.cloneUrl} → ${target} ...` }],
         details: {},
       });
 

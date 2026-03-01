@@ -1,6 +1,6 @@
 # Pi Extensions
 
-Collection of extensions for [pi-mono](https://github.com/badlogic/pi-mono) coding agent.
+Collection of extensions for [pi-mono](https://github.com/badlogic/pi-mono) coding-agent.
 
 ## Structure
 
