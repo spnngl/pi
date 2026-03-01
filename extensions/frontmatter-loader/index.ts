@@ -2,13 +2,19 @@
  * Frontmatter Context Loader Extension
  *
  * Intercepts prompts with YAML frontmatter, loads INSTRUCTIONS.md files
- * from ~/.pi/<path>/, and injects content before LLM processing.
+ * from ~/.pi/<key>/<path>/, and injects content before LLM processing.
  *
  * Format:
  * ---
  * docs: lang/nu, lang/python
+ * config: myapp
  * ---
  * Your prompt here
+ *
+ * Translates to:
+ * - ~/.pi/docs/lang/nu/INSTRUCTIONS.md
+ * - ~/.pi/docs/lang/python/INSTRUCTIONS.md
+ * - ~/.pi/config/myapp/INSTRUCTIONS.md
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -27,31 +33,34 @@ interface LoadResult {
   size: number;
 }
 
-function parseFrontmatter(prompt: string): { docs: string[]; body: string } | null {
+function parseFrontmatter(prompt: string): { paths: string[]; body: string } | null {
   const match = prompt.match(FRONTMATTER_REGEX);
   if (!match) return null;
 
   const frontmatter = match[1];
   const body = match[2];
 
-  const docs: string[] = [];
+  const paths: string[] = [];
   for (const line of frontmatter.split("\n")) {
     const colonIndex = line.indexOf(":");
     if (colonIndex === -1) continue;
 
-    const key = line.slice(0, colonIndex).trim().toLowerCase();
+    const key = line.slice(0, colonIndex).trim();
     const value = line.slice(colonIndex + 1).trim();
 
-    if (key === "docs" && value) {
-      const paths = value
+    if (key && value) {
+      // key: subpath1, subpath2 → key/subpath1, key/subpath2
+      const subpaths = value
         .split(",")
         .map((p) => p.trim())
         .filter(Boolean);
-      docs.push(...paths);
+      for (const subpath of subpaths) {
+        paths.push(`${key}/${subpath}`);
+      }
     }
   }
 
-  return { docs, body };
+  return { paths, body };
 }
 
 function loadDoc(docPath: string): LoadResult {
@@ -91,7 +100,7 @@ export default function (pi: ExtensionAPI) {
     if (!prompt.startsWith("---\n")) return;
 
     const parsed = parseFrontmatter(prompt);
-    if (!parsed || parsed.docs.length === 0) {
+    if (!parsed || parsed.paths.length === 0) {
       // Has frontmatter but no docs key - just strip frontmatter
       if (parsed) {
         return { prompt: parsed.body.trim() };
@@ -100,7 +109,7 @@ export default function (pi: ExtensionAPI) {
     }
 
     const results: LoadResult[] = [];
-    for (const docPath of parsed.docs) {
+    for (const docPath of parsed.paths) {
       const result = loadDoc(docPath);
       results.push(result);
 
@@ -132,25 +141,38 @@ export default function (pi: ExtensionAPI) {
     description: "Test frontmatter doc loading without sending to LLM",
     handler: async (args, ctx) => {
       if (!args) {
-        ctx.ui.notify("Usage: /frontmatter-test docs: path1, path2", "warning");
+        ctx.ui.notify("Usage: /frontmatter-test key: path1, path2", "warning");
         return;
       }
 
-      // Parse as if it were frontmatter content
-      const docs = args
-        .replace(/^docs:\s*/i, "")
-        .split(",")
-        .map((p) => p.trim())
-        .filter(Boolean);
+      // Parse as frontmatter line: key: value1, value2
+      const colonIndex = args.indexOf(":");
+      if (colonIndex === -1) {
+        ctx.ui.notify("Format: key: path1, path2", "warning");
+        return;
+      }
 
-      if (docs.length === 0) {
+      const key = args.slice(0, colonIndex).trim();
+      const value = args.slice(colonIndex + 1).trim();
+
+      if (!key || !value) {
+        ctx.ui.notify("Format: key: path1, path2", "warning");
+        return;
+      }
+
+      const paths = value
+        .split(",")
+        .map((p) => `${key}/${p.trim()}`)
+        .filter((p) => p !== `${key}/`);
+
+      if (paths.length === 0) {
         ctx.ui.notify("No paths specified", "warning");
         return;
       }
 
       console.log("\n=== Frontmatter Test ===\n");
 
-      for (const docPath of docs) {
+      for (const docPath of paths) {
         const result = loadDoc(docPath);
         if (result.content !== null) {
           console.log(`✓ ${docPath} → ${result.fullPath} (${formatSize(result.size)})`);
